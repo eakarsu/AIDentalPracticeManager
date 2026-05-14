@@ -2,11 +2,31 @@ const express = require('express');
 const db = require('../db');
 const { authenticateToken } = require('../middleware/auth');
 const { queryOpenRouter } = require('../services/openrouter');
+const { aiRateLimiter } = require('../middleware/rateLimiter');
 const router = express.Router();
 
-// Get all insurance claims
+// Get all insurance claims — supports ?page=N&limit=N for pagination
 router.get('/', authenticateToken, async (req, res) => {
   try {
+    if (req.query.page !== undefined) {
+      const page = Math.max(1, parseInt(req.query.page) || 1);
+      const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 20));
+      const offset = (page - 1) * limit;
+
+      const countResult = await db.query('SELECT COUNT(*) as total FROM insurance_claims');
+      const total = parseInt(countResult.rows[0].total);
+
+      const result = await db.query(`
+        SELECT i.*, p.first_name, p.last_name
+        FROM insurance_claims i
+        JOIN patients p ON i.patient_id = p.id
+        ORDER BY i.created_at DESC
+        LIMIT $1 OFFSET $2
+      `, [limit, offset]);
+
+      return res.json({ data: result.rows, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+    }
+
     const result = await db.query(`
       SELECT i.*, p.first_name, p.last_name
       FROM insurance_claims i
@@ -51,7 +71,7 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 // AI Pre-authorization
-router.post('/:id/ai-preauth', authenticateToken, async (req, res) => {
+router.post('/:id/ai-preauth', authenticateToken, aiRateLimiter, async (req, res) => {
   try {
     const claim = await db.query(`
       SELECT i.*, p.first_name, p.last_name, p.medical_history, p.date_of_birth, p.insurance_provider as patient_ins,

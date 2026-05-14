@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { toast } from 'react-toastify';
 import api from '../services/api';
+import Pagination from '../components/Pagination';
 
 function Patients() {
   const [patients, setPatients] = useState([]);
@@ -10,23 +11,35 @@ function Patients() {
   const [showDetail, setShowDetail] = useState(false);
   const [selected, setSelected] = useState(null);
   const [editMode, setEditMode] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
   const [form, setForm] = useState({
     first_name: '', last_name: '', email: '', phone: '', date_of_birth: '',
     address: '', insurance_provider: '', insurance_id: '', medical_history: '', allergies: '', notes: ''
   });
 
-  useEffect(() => { fetchPatients(); }, []);
-
-  const fetchPatients = async () => {
+  const fetchPatients = useCallback(async () => {
     try {
-      const res = await api.get('/patients');
-      setPatients(res.data);
+      const res = await api.get(`/patients?page=${page}&limit=20`);
+      // Paginated response shape: { data, pagination }
+      if (res.data && Array.isArray(res.data.data)) {
+        setPatients(res.data.data);
+        setTotalPages(res.data.pagination?.totalPages || 1);
+        setTotal(res.data.pagination?.total || res.data.data.length);
+      } else {
+        setPatients(Array.isArray(res.data) ? res.data : []);
+        setTotalPages(1);
+        setTotal(Array.isArray(res.data) ? res.data.length : 0);
+      }
     } catch (err) {
       toast.error('Failed to load patients');
     } finally {
       setLoading(false);
     }
-  };
+  }, [page]);
+
+  useEffect(() => { fetchPatients(); }, [fetchPatients]);
 
   const handleRowClick = async (id) => {
     try {
@@ -96,7 +109,7 @@ function Patients() {
       <div className="page-header">
         <div>
           <h2>Patient Management</h2>
-          <p>{patients.length} patients registered</p>
+          <p>{total || patients.length} patients registered</p>
         </div>
         <button className="btn btn-primary" onClick={handleNew}>+ New Patient</button>
       </div>
@@ -137,6 +150,8 @@ function Patients() {
           </div>
         )}
       </div>
+
+      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
 
       {/* Detail Modal */}
       {showDetail && selected && (

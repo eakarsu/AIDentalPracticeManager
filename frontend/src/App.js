@@ -14,7 +14,26 @@ import Billing from './pages/Billing';
 import Inventory from './pages/Inventory';
 import Reports from './pages/Reports';
 import ClinicalNotes from './pages/ClinicalNotes';
+import AINewTools from './pages/AINewTools';
+import Integrations from './pages/Integrations';
+import PortalAndCv from './pages/PortalAndCv';
 import './App.css';
+
+// // === Batch 02 Gaps & Frontend Mounts ===
+import CfPredictiveAiDiagnostics from './pages/CfPredictiveAiDiagnostics';
+import CfPatientRiskStratification from './pages/CfPatientRiskStratification';
+import CfTreatmentOutcomePrediction from './pages/CfTreatmentOutcomePrediction';
+import CfAppointmentNoShowPrediction from './pages/CfAppointmentNoShowPrediction';
+import CfInsuranceClaimAutomation from './pages/CfInsuranceClaimAutomation';
+import GapXraycvLacksAiDiagnosisEndpointDiagnoseFromXray from './pages/GapXraycvLacksAiDiagnosisEndpointDiagnoseFromXray';
+import GapMissingPredictTreatmentOutcomeIdentifyRecallCandidates from './pages/GapMissingPredictTreatmentOutcomeIdentifyRecallCandidates';
+import GapLimitedPacsIntegrationOnlyIntegrationsJsStub from './pages/GapLimitedPacsIntegrationOnlyIntegrationsJsStub';
+import GapNoIntraoralCameraIntegration from './pages/GapNoIntraoralCameraIntegration';
+import GapNoElectronicHealthRecordsEhrComplianceLayer from './pages/GapNoElectronicHealthRecordsEhrComplianceLayer';
+import GapPatientPortalIsScaffoldedButReminderSystemIncomplete from './pages/GapPatientPortalIsScaffoldedButReminderSystemIncomplete';
+import GapNoInsuranceEligibilityVerificationAdapter from './pages/GapNoInsuranceEligibilityVerificationAdapter';
+import GapNoWebhooks from './pages/GapNoWebhooks';
+import GapNoCalendarIntegrationDespiteScheduling from './pages/GapNoCalendarIntegrationDespiteScheduling';
 
 function AppContent() {
   const [user, setUser] = useState(null);
@@ -56,6 +75,9 @@ function AppContent() {
     { path: '/notes', label: 'Clinical Notes', icon: '📝' },
     { path: '/inventory', label: 'Inventory', icon: '📦' },
     { path: '/reports', label: 'Reports', icon: '📈' },
+    { path: '/ai-new-tools', label: 'AI New Tools', icon: '🤖' },
+    { path: '/integrations', label: 'Integrations', icon: '🔌' },
+    { path: '/portal-cv', label: 'Portal & CV', icon: '🩻' },
   ];
 
   return (
@@ -109,7 +131,26 @@ function AppContent() {
           <Route path="/notes" element={<ClinicalNotes />} />
           <Route path="/inventory" element={<Inventory />} />
           <Route path="/reports" element={<Reports />} />
-        </Routes>
+          <Route path="/ai-new-tools" element={<AINewTools />} />
+          <Route path="/integrations" element={<Integrations />} />
+          <Route path="/portal-cv" element={<PortalAndCv />} />
+        
+        {/* // === Batch 02 Gaps & Frontend Mounts === */}
+        <Route path="/cf/predictive-ai-diagnostics" element={<CfPredictiveAiDiagnostics />} />
+        <Route path="/cf/patient-risk-stratification" element={<CfPatientRiskStratification />} />
+        <Route path="/cf/treatment-outcome-prediction" element={<CfTreatmentOutcomePrediction />} />
+        <Route path="/cf/appointment-no-show-prediction" element={<CfAppointmentNoShowPrediction />} />
+        <Route path="/cf/insurance-claim-automation" element={<CfInsuranceClaimAutomation />} />
+        <Route path="/gap/xraycv-lacks-ai-diagnosis-endpoint-diagnose-from-xray" element={<GapXraycvLacksAiDiagnosisEndpointDiagnoseFromXray />} />
+        <Route path="/gap/missing-predict-treatment-outcome-identify-recall-candidates" element={<GapMissingPredictTreatmentOutcomeIdentifyRecallCandidates />} />
+        <Route path="/gap/limited-pacs-integration-only-integrations-js-stub" element={<GapLimitedPacsIntegrationOnlyIntegrationsJsStub />} />
+        <Route path="/gap/no-intraoral-camera-integration" element={<GapNoIntraoralCameraIntegration />} />
+        <Route path="/gap/no-electronic-health-records-ehr-compliance-layer" element={<GapNoElectronicHealthRecordsEhrComplianceLayer />} />
+        <Route path="/gap/patient-portal-is-scaffolded-but-reminder-system-incomplete" element={<GapPatientPortalIsScaffoldedButReminderSystemIncomplete />} />
+        <Route path="/gap/no-insurance-eligibility-verification-adapter" element={<GapNoInsuranceEligibilityVerificationAdapter />} />
+        <Route path="/gap/no-webhooks" element={<GapNoWebhooks />} />
+        <Route path="/gap/no-calendar-integration-despite-scheduling" element={<GapNoCalendarIntegrationDespiteScheduling />} />
+      </Routes>
       </main>
       <ToastContainer position="top-right" autoClose={3000} theme="colored" />
     </div>

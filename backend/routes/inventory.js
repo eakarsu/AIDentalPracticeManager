@@ -3,9 +3,22 @@ const db = require('../db');
 const { authenticateToken } = require('../middleware/auth');
 const router = express.Router();
 
-// Get all inventory items
+// Get all inventory items — supports ?page=N&limit=N for pagination
 router.get('/', authenticateToken, async (req, res) => {
   try {
+    if (req.query.page !== undefined) {
+      const page = Math.max(1, parseInt(req.query.page) || 1);
+      const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 20));
+      const offset = (page - 1) * limit;
+
+      const countResult = await db.query('SELECT COUNT(*) as total FROM inventory');
+      const total = parseInt(countResult.rows[0].total);
+
+      const result = await db.query('SELECT * FROM inventory ORDER BY name LIMIT $1 OFFSET $2', [limit, offset]);
+
+      return res.json({ data: result.rows, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+    }
+
     const result = await db.query('SELECT * FROM inventory ORDER BY name');
     res.json(result.rows);
   } catch (err) {

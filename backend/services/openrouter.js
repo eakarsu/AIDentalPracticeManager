@@ -11,7 +11,7 @@ async function queryOpenRouter(prompt, systemPrompt = 'You are an expert dental 
       'X-Title': 'AI Dental Practice Manager',
     },
     body: JSON.stringify({
-      model: process.env.OPENROUTER_MODEL || 'anthropic/claude-haiku-4.5',
+      model: 'anthropic/claude-3-5-sonnet-20241022',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt },
