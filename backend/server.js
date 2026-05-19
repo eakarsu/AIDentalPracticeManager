@@ -90,6 +90,12 @@ app.use('/api/gap-no-webhooks', require('./routes/gap_no_webhooks'));
 // // === Batch 02 Gaps & Frontend Mounts ===
 app.use('/api/gap-no-calendar-integration-despite-scheduling', require('./routes/gap_no_calendar_integration_despite_scheduling'));
 
+// === Custom Practice Views (mounted before 404 fallthrough) ===
+app.use('/api/custom-views', require('./routes/customViews'));
+
+// 404 fallback for unknown API routes
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found', path: req.originalUrl }));
+
 app.listen(PORT, () => {
   console.log(`🦷 Dental Practice API running on port ${PORT}`);
   console.log(`   CORS allowlist: ${corsOrigins.join(', ')}`);

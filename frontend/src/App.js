@@ -17,6 +17,7 @@ import ClinicalNotes from './pages/ClinicalNotes';
 import AINewTools from './pages/AINewTools';
 import Integrations from './pages/Integrations';
 import PortalAndCv from './pages/PortalAndCv';
+import CustomViewsPage from './pages/CustomViewsPage';
 import './App.css';
 
 // // === Batch 02 Gaps & Frontend Mounts ===
@@ -78,6 +79,7 @@ function AppContent() {
     { path: '/ai-new-tools', label: 'AI New Tools', icon: '🤖' },
     { path: '/integrations', label: 'Integrations', icon: '🔌' },
     { path: '/portal-cv', label: 'Portal & CV', icon: '🩻' },
+    { path: '/custom-views', label: 'Practice Views', icon: '🦷' },
   ];
 
   return (
@@ -134,7 +136,8 @@ function AppContent() {
           <Route path="/ai-new-tools" element={<AINewTools />} />
           <Route path="/integrations" element={<Integrations />} />
           <Route path="/portal-cv" element={<PortalAndCv />} />
-        
+          <Route path="/custom-views" element={<CustomViewsPage />} />
+
         {/* // === Batch 02 Gaps & Frontend Mounts === */}
         <Route path="/cf/predictive-ai-diagnostics" element={<CfPredictiveAiDiagnostics />} />
         <Route path="/cf/patient-risk-stratification" element={<CfPatientRiskStratification />} />
