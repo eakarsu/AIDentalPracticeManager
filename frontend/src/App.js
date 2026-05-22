@@ -18,6 +18,7 @@ import AINewTools from './pages/AINewTools';
 import Integrations from './pages/Integrations';
 import PortalAndCv from './pages/PortalAndCv';
 import CustomViewsPage from './pages/CustomViewsPage';
+import PerioRecallReadiness from './pages/PerioRecallReadiness';
 import './App.css';
 
 // // === Batch 02 Gaps & Frontend Mounts ===
@@ -35,6 +36,9 @@ import GapPatientPortalIsScaffoldedButReminderSystemIncomplete from './pages/Gap
 import GapNoInsuranceEligibilityVerificationAdapter from './pages/GapNoInsuranceEligibilityVerificationAdapter';
 import GapNoWebhooks from './pages/GapNoWebhooks';
 import GapNoCalendarIntegrationDespiteScheduling from './pages/GapNoCalendarIntegrationDespiteScheduling';
+
+import CodexCustomVizFeature from './pages/CodexCustomVizFeature';
+import CodexOperationsFeature from './pages/CodexOperationsFeature';
 
 function AppContent() {
   const [user, setUser] = useState(null);
@@ -72,6 +76,7 @@ function AppContent() {
     { path: '/insurance', label: 'Insurance', icon: '🏥' },
     { path: '/scheduling', label: 'Scheduling', icon: '📅' },
     { path: '/recalls', label: 'Recall Campaigns', icon: '📧' },
+    { path: '/perio-recall-readiness', label: 'Perio Recall', icon: '🪥' },
     { path: '/billing', label: 'Billing', icon: '💰' },
     { path: '/notes', label: 'Clinical Notes', icon: '📝' },
     { path: '/inventory', label: 'Inventory', icon: '📦' },
@@ -121,6 +126,9 @@ function AppContent() {
       )}
       <main className={user ? 'main-content' : 'main-content full'}>
         <Routes>
+        <Route path="/codex/custom-viz" element={<CodexCustomVizFeature />} />
+        <Route path="/codex/operations" element={<CodexOperationsFeature />} />
+
           <Route path="/login" element={<Login onLogin={handleLogin} />} />
           <Route path="/" element={<Dashboard />} />
           <Route path="/patients" element={<Patients />} />
@@ -129,6 +137,7 @@ function AppContent() {
           <Route path="/insurance" element={<InsuranceClaims />} />
           <Route path="/scheduling" element={<Scheduling />} />
           <Route path="/recalls" element={<RecallCampaigns />} />
+          <Route path="/perio-recall-readiness" element={<PerioRecallReadiness />} />
           <Route path="/billing" element={<Billing />} />
           <Route path="/notes" element={<ClinicalNotes />} />
           <Route path="/inventory" element={<Inventory />} />

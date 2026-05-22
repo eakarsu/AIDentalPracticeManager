@@ -57,6 +57,7 @@ app.use('/api/ai', require('./routes/xrayDiagnostics'));
 app.use('/api/integrations', require('./routes/integrations'));
 app.use('/api/portal', require('./routes/portal'));
 app.use('/api/xray-cv', require('./routes/xrayCv'));
+app.use('/api/perio-recall-readiness', require('./routes/perioRecallReadiness'));
 
 // Health check
 app.get('/api/health', (req, res) => {
