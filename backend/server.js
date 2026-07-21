@@ -6,6 +6,11 @@ require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const app = express();
 const PORT = process.env.BACKEND_PORT || 3001;
 
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  throw new Error('JWT_SECRET must be configured with at least 32 characters');
+}
+if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: false, // disabled for dev API
@@ -58,38 +63,15 @@ app.use('/api/integrations', require('./routes/integrations'));
 app.use('/api/portal', require('./routes/portal'));
 app.use('/api/xray-cv', require('./routes/xrayCv'));
 app.use('/api/perio-recall-readiness', require('./routes/perioRecallReadiness'));
+app.use('/api/care-coordination', require('./routes/careCoordination'));
 
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-xraycv-lacks-ai-diagnosis-endpoint-diagnose-from-xray', require('./routes/gap_xraycv_lacks_ai_diagnosis_endpoint_diagnose_from_xray'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-missing-predict-treatment-outcome-identify-recall-candidates', require('./routes/gap_missing_predict_treatment_outcome_identify_recall_candidates'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-limited-pacs-integration-only-integrations-js-stub', require('./routes/gap_limited_pacs_integration_only_integrations_js_stub'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-no-intraoral-camera-integration', require('./routes/gap_no_intraoral_camera_integration'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-no-electronic-health-records-ehr-compliance-layer', require('./routes/gap_no_electronic_health_records_ehr_compliance_layer'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-patient-portal-is-scaffolded-but-reminder-system-incomplete', require('./routes/gap_patient_portal_is_scaffolded_but_reminder_system_incomplete'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-no-insurance-eligibility-verification-adapter', require('./routes/gap_no_insurance_eligibility_verification_adapter'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-no-webhooks', require('./routes/gap_no_webhooks'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-no-calendar-integration-despite-scheduling', require('./routes/gap_no_calendar_integration_despite_scheduling'));
+// Generated gap routers are intentionally not mounted. Provider-specific adapters
+// remain unavailable until real contracts, credentials, and conformance tests exist.
 
 // === Custom Practice Views (mounted before 404 fallthrough) ===
 app.use('/api/custom-views', require('./routes/customViews'));
