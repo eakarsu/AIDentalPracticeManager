@@ -13,7 +13,7 @@
     "react-markdown": "^9.0.1"
   },
   "scripts": {
-    "start": "PORT=3000 react-scripts start",
+    "start": "react-scripts start",
     "build": "react-scripts build"
   },
   "proxy": "http://localhost:3001",

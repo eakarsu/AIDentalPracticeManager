@@ -66,10 +66,18 @@ router.post('/noshow-predict', auth, async (req, res) => {
     try {
       if (pool && pool.query) {
         await pool.query(
-          `INSERT INTO ai_analyses (analysis_type, input_data_json, result_json, model_used, user_id, created_at)
-           VALUES ($1, $2, $3, $4, $5, NOW())
-           ON CONFLICT DO NOTHING`,
-          ['noshow-predict', JSON.stringify(payload), JSON.stringify(ai.result), ai.model, req.user?.id || null]
+          `INSERT INTO ai_results
+             (endpoint, resource_type, input_summary, result, model, tokens_used, user_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            'noshow-predict',
+            'appointment',
+            'Authenticated appointment no-show prediction',
+            ai.result,
+            ai.model,
+            ai.tokens,
+            req.user?.id || null,
+          ]
         );
       }
     } catch (persistErr) {
