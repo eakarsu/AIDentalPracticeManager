@@ -17,7 +17,7 @@ function Login({ onLogin }) {
       localStorage.setItem('user', JSON.stringify(res.data.user));
       onLogin(res.data.user);
     } catch (err) {
-      setError(err.response?.data?.error || 'Login failed');
+      setError(err.response?.data?.error || err.message || 'Login failed');
     } finally {
       setLoading(false);
     }
@@ -56,8 +56,8 @@ function Login({ onLogin }) {
           </button>
         </form>
 
-        <button className="autofill-btn" onClick={autofill}>
-          Quick Login - Auto-fill Demo Credentials
+        <button className="autofill-btn" onClick={autofill} aria-label="Auto Fill Demo Credentials">
+          Quick Login - Auto Fill Demo Credentials
         </button>
       </div>
     </div>
