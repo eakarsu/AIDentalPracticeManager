@@ -6,6 +6,8 @@ function Login({ onLogin }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const demoAvailable = process.env.REACT_APP_ENABLE_DEMO_CREDENTIAL_AUTOFILL === 'true' &&
+    Boolean(process.env.REACT_APP_DEMO_EMAIL && process.env.REACT_APP_DEMO_PASSWORD);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -24,8 +26,10 @@ function Login({ onLogin }) {
   };
 
   const autofill = () => {
-    setEmail(process.env.REACT_APP_DEMO_EMAIL || '');
-    setPassword(process.env.REACT_APP_DEMO_PASSWORD || '');
+    if (!demoAvailable) return;
+    setEmail(process.env.REACT_APP_DEMO_EMAIL);
+    setPassword(process.env.REACT_APP_DEMO_PASSWORD);
+    setError('');
   };
 
   return (
@@ -56,9 +60,10 @@ function Login({ onLogin }) {
           </button>
         </form>
 
-        <button className="autofill-btn" onClick={autofill} aria-label="Auto Fill Demo Credentials">
-          Quick Login - Auto Fill Demo Credentials
+        <button type="button" className="autofill-btn" onClick={autofill} disabled={loading || !demoAvailable}>
+          Fill demo credentials
         </button>
+        {!demoAvailable && <p role="status">Demo credentials are not configured for this session. Enter your account credentials to sign in.</p>}
       </div>
     </div>
   );

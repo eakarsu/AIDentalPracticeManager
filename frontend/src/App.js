@@ -1,3 +1,4 @@
+import AIReportLibrary from "./components/AIReportLibrary";
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { ToastContainer } from 'react-toastify';
@@ -122,7 +123,7 @@ function AppContent() {
             </div>
             <button className="logout-btn" onClick={handleLogout}>Logout</button>
           </div>
-        </nav>
+        <AIReportLibrary /></nav>
       )}
       <main className={user ? 'main-content' : 'main-content full'}>
         <Routes>

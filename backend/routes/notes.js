@@ -3,6 +3,7 @@ const db = require('../db');
 const { authenticateToken } = require('../middleware/auth');
 const { queryOpenRouter } = require('../services/openrouter');
 const { aiRateLimiter } = require('../middleware/rateLimiter');
+const { nativeAIRequestLifecycle, requireCurrentAIActor, throwIfCancelled, readNativeReviewFocus } = require('../services/nativeAIRequest');
 const router = express.Router();
 
 // Get all clinical notes (optionally filter by patient) — supports ?page=N&limit=N for pagination
@@ -104,11 +105,13 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 });
 
 // POST /api/notes/ai-draft — generate AI SOAP note draft
-router.post('/ai-draft', authenticateToken, aiRateLimiter, async (req, res) => {
+router.post('/ai-draft', authenticateToken, aiRateLimiter, nativeAIRequestLifecycle, async (req, res) => {
   try {
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
+    const reviewFocus = readNativeReviewFocus(req.body);
     const { patient_id, chief_complaint, procedures_performed, tooth_numbers } = req.body;
 
-    if (!patient_id || !chief_complaint) {
+    if (!Number.isSafeInteger(Number(patient_id)) || Number(patient_id) < 1 || typeof chief_complaint !== 'string' || !chief_complaint.trim()) {
       return res.status(400).json({ error: 'Missing required fields: patient_id, chief_complaint' });
     }
 
@@ -134,8 +137,8 @@ router.post('/ai-draft', authenticateToken, aiRateLimiter, async (req, res) => {
     const prompt = `Generate a clinical SOAP note draft for this dental visit.
 
 Patient: ${patient.first_name} ${patient.last_name}, Age: ${age}
-Medical History: ${patient.medical_history || 'None reported'}
-Allergies: ${patient.allergies || 'None'}
+Medical History: ${patient.medical_history || 'Not documented'}
+Allergies: ${patient.allergies || 'Not documented'}
 
 Visit Information:
 - Chief Complaint: ${chief_complaint}
@@ -154,26 +157,22 @@ Generate a complete SOAP note. Return ONLY valid JSON in this exact format:
 }`;
 
     const aiResult = await queryOpenRouter(
-      prompt,
-      'You are an expert dental clinical documentation AI. Generate professional, accurate SOAP notes based on the visit information provided. Return only valid JSON.'
+      prompt + '\n\nReview focus: ' + (reviewFocus || 'Verify documented visit information and missing facts.'),
+      'You are a dental clinical documentation assistant. Return only valid JSON for an unsigned SOAP draft. Use only documented visit information and actual patient records. Mark missing objective findings, diagnosis, service details and consent as not documented; never infer them from a proposed procedure or workflow note. This draft cannot sign, approve, overwrite or finalize a clinical record.',
+      { signal: req.aiSignal }
     );
 
     const { parseAIJson } = require('../services/parseAIJson');
     const parsed = parseAIJson(aiResult.content);
-    let structured;
-    if (parsed.raw_response) {
-      // 4th-strategy SOAP-specific extraction
-      const text = parsed.raw_response;
-      structured = {
-        subjective: text.match(/subjective[:\s]+(.+?)(?=objective|$)/is)?.[1]?.trim() || text,
-        objective: text.match(/objective[:\s]+(.+?)(?=assessment|$)/is)?.[1]?.trim() || '',
-        assessment: text.match(/assessment[:\s]+(.+?)(?=plan|$)/is)?.[1]?.trim() || '',
-        plan: text.match(/plan[:\s]+(.+?)$/is)?.[1]?.trim() || ''
-      };
-    } else {
-      structured = parsed;
+    if (!parsed || ['subjective', 'objective', 'assessment', 'plan'].some(key => typeof parsed[key] !== 'string' || !parsed[key].trim())) {
+      const error = new Error('OpenRouter did not return a complete structured SOAP draft. Review the documented source and generate again.');
+      error.statusCode = 502;
+      throw error;
     }
+    const structured = parsed;
 
+    throwIfCancelled(req.aiSignal);
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
     res.json({
       draft: structured,
       patient: { id: patient_id, name: `${patient.first_name} ${patient.last_name}` },
@@ -181,7 +180,8 @@ Generate a complete SOAP note. Return ONLY valid JSON in this exact format:
       usage: aiResult.usage
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (req.aiSignal?.aborted || res.destroyed || res.writableEnded) return;
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 

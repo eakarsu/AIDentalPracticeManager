@@ -4,10 +4,11 @@ const { authenticateToken } = require('../middleware/auth');
 const { queryOpenRouter } = require('../services/openrouter');
 const { parseAIJson } = require('../services/parseAIJson');
 const { aiRateLimiter } = require('../middleware/rateLimiter');
+const { nativeAIRequestLifecycle, requireCurrentAIActor, persistNativeAIResult, throwIfCancelled, readNativeReviewFocus } = require('../services/nativeAIRequest');
 const router = express.Router();
 
 // Ensure ai_results JSONB persistence table exists
-(async () => {
+const aiResultsReady = (async () => {
   try {
     await db.query(`
       CREATE TABLE IF NOT EXISTS ai_results (
@@ -28,7 +29,11 @@ const router = express.Router();
   }
 })();
 
-async function persistAIResult({ endpoint, resource_type, resource_id, input_summary, result, model, tokens_used, user_id }) {
+async function persistAIResult({ endpoint, resource_type, resource_id, input_summary, result, model, tokens_used, user_id }, { signal } = {}) {
+  if (signal) {
+    await aiResultsReady;
+    return persistNativeAIResult(db, [endpoint, resource_type || null, resource_id || null, input_summary || null, result, model || null, tokens_used ?? null, user_id], user_id, signal);
+  }
   try {
     await db.query(
       `INSERT INTO ai_results (endpoint, resource_type, resource_id, input_summary, result, model, tokens_used, user_id)
@@ -43,10 +48,12 @@ async function persistAIResult({ endpoint, resource_type, resource_id, input_sum
 // POST /api/ai/insurance-preauth
 // Accepts: { treatment_id }
 // Returns pre-authorization likelihood assessment
-router.post('/insurance-preauth', authenticateToken, aiRateLimiter, async (req, res) => {
+router.post('/insurance-preauth', authenticateToken, aiRateLimiter, nativeAIRequestLifecycle, async (req, res) => {
   try {
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
+    const reviewFocus = readNativeReviewFocus(req.body);
     const { treatment_id } = req.body;
-    if (!treatment_id) return res.status(400).json({ error: 'Missing required field: treatment_id' });
+    if (!Number.isSafeInteger(Number(treatment_id)) || Number(treatment_id) < 1) return res.status(400).json({ error: 'Missing required field: treatment_id' });
 
     const treatmentResult = await db.query(`
       SELECT t.*, p.first_name, p.last_name, p.date_of_birth, p.insurance_provider,
@@ -68,8 +75,8 @@ router.post('/insurance-preauth', authenticateToken, aiRateLimiter, async (req, 
 Patient: ${treatment.first_name} ${treatment.last_name}, Age: ${age}
 Insurance Provider: ${treatment.insurance_provider || 'Unknown'}
 Insurance ID: ${treatment.insurance_id || 'Not provided'}
-Medical History: ${treatment.medical_history || 'None'}
-Allergies: ${treatment.allergies || 'None'}
+Medical History: ${treatment.medical_history || 'Not documented'}
+Allergies: ${treatment.allergies || 'Not documented'}
 
 Treatment Plan:
 - Diagnosis: ${treatment.diagnosis}
@@ -88,16 +95,19 @@ Provide a pre-authorization assessment. Return JSON:
   "appeal_strategy": "if coverage is likely denied, strategy to appeal",
   "estimated_patient_responsibility": "estimated out-of-pocket amount or percentage",
   "recommendation": "next steps to maximize coverage approval"
-}`;
+}
+
+Review focus: ${reviewFocus || "Review the documented source evidence, unknown facts and human verification requirements."}`;
 
     const aiResult = await queryOpenRouter(
       prompt,
-      'You are an expert dental insurance billing and pre-authorization specialist. Provide accurate, actionable pre-auth assessments based on standard dental insurance practices.'
+      'You are an expert dental insurance billing and pre-authorization specialist. Provide accurate, actionable pre-auth assessments based on standard dental insurance practices.',
+      { signal: req.aiSignal }
     );
 
     const parsed = parseAIJson(aiResult.content);
 
-    persistAIResult({
+    await persistAIResult({
       endpoint: 'insurance-preauth',
       resource_type: 'treatment_plan',
       resource_id: treatment_id,
@@ -106,7 +116,8 @@ Provide a pre-authorization assessment. Return JSON:
       model: aiResult.model,
       tokens_used: aiResult.usage?.total_tokens,
       user_id: req.user?.id,
-    });
+    }, { signal: req.aiSignal });
+    throwIfCancelled(req.aiSignal);
 
     res.json({
       treatment_id,
@@ -116,17 +127,20 @@ Provide a pre-authorization assessment. Return JSON:
       usage: aiResult.usage
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (req.aiSignal?.aborted || res.destroyed || res.writableEnded) return;
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
 // POST /api/ai/treatment-plan-summary
 // Accepts: { patient_id }
 // Returns patient-friendly summary of complete treatment plan
-router.post('/treatment-plan-summary', authenticateToken, aiRateLimiter, async (req, res) => {
+router.post('/treatment-plan-summary', authenticateToken, aiRateLimiter, nativeAIRequestLifecycle, async (req, res) => {
   try {
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
+    const reviewFocus = readNativeReviewFocus(req.body);
     const { patient_id } = req.body;
-    if (!patient_id) return res.status(400).json({ error: 'Missing required field: patient_id' });
+    if (!Number.isSafeInteger(Number(patient_id)) || Number(patient_id) < 1) return res.status(400).json({ error: 'Missing required field: patient_id' });
 
     const patientResult = await db.query(
       'SELECT first_name, last_name, date_of_birth, medical_history, allergies FROM patients WHERE id = $1',
@@ -156,7 +170,7 @@ router.post('/treatment-plan-summary', authenticateToken, aiRateLimiter, async (
 The summary should be easy to understand (avoid jargon), reassuring, and actionable.
 
 Patient: ${patient.first_name} ${patient.last_name}, Age: ${age}
-Medical History: ${patient.medical_history || 'None'}
+Medical History: ${patient.medical_history || 'Not documented'}
 
 Treatment Plans (${treatments.rows.length} total, estimated total: $${totalCost.toFixed(2)}):
 ${JSON.stringify(treatments.rows, null, 2)}
@@ -177,16 +191,19 @@ Return JSON:
   "next_step": "clear single call to action",
   "timeline_summary": "overall treatment timeline in plain English",
   "reassurance": "empathetic closing note"
-}`;
+}
+
+Review focus: ${reviewFocus || "Review the documented source evidence, unknown facts and human verification requirements."}`;
 
     const aiResult = await queryOpenRouter(
       prompt,
-      'You are a patient communication specialist at a dental practice. Create warm, clear, non-intimidating treatment summaries that help patients understand and commit to their care.'
+      'You are a patient communication specialist at a dental practice. Create warm, clear, non-intimidating treatment summaries that help patients understand and commit to their care.',
+      { signal: req.aiSignal }
     );
 
     const parsed = parseAIJson(aiResult.content);
 
-    persistAIResult({
+    await persistAIResult({
       endpoint: 'treatment-plan-summary',
       resource_type: 'patient',
       resource_id: patient_id,
@@ -195,7 +212,8 @@ Return JSON:
       model: aiResult.model,
       tokens_used: aiResult.usage?.total_tokens,
       user_id: req.user?.id,
-    });
+    }, { signal: req.aiSignal });
+    throwIfCancelled(req.aiSignal);
 
     res.json({
       patient: { id: patient_id, name: `${patient.first_name} ${patient.last_name}` },
@@ -206,18 +224,24 @@ Return JSON:
       usage: aiResult.usage
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (req.aiSignal?.aborted || res.destroyed || res.writableEnded) return;
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
 // POST /api/ai/practice-insights
 // Accepts: { date_range: { start, end } }
 // Returns practice performance insights
-router.post('/practice-insights', authenticateToken, aiRateLimiter, async (req, res) => {
+router.post('/practice-insights', authenticateToken, aiRateLimiter, nativeAIRequestLifecycle, async (req, res) => {
   try {
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
+    const reviewFocus = readNativeReviewFocus(req.body);
     const { date_range } = req.body;
+    if (date_range !== undefined && (!date_range || typeof date_range !== 'object' || Array.isArray(date_range))) return res.status(400).json({ error: 'Date range must contain valid optional start and end dates.' });
+    if (['start', 'end'].some(key => date_range?.[key] !== undefined && (typeof date_range[key] !== 'string' || Number.isNaN(Date.parse(date_range[key]))))) return res.status(400).json({ error: 'Date filters must be valid dates.' });
     const startDate = date_range?.start || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
     const endDate = date_range?.end || new Date().toISOString();
+    if (new Date(startDate) > new Date(endDate)) return res.status(400).json({ error: 'The start date must be on or before the end date.' });
 
     const [appointments, billing, treatments, patientStats] = await Promise.all([
       db.query(`
@@ -235,16 +259,16 @@ router.post('/practice-insights', authenticateToken, aiRateLimiter, async (req, 
 
       db.query(`
         SELECT
-          billing_type,
+          'invoice' AS billing_type,
           status,
           COUNT(*) as count,
-          SUM(amount) as total_amount,
-          AVG(amount) as avg_amount
-        FROM billing
+          SUM(total_amount) as total_amount,
+          AVG(total_amount) as avg_amount
+        FROM invoices
         WHERE created_at BETWEEN $1 AND $2
-        GROUP BY billing_type, status
+        GROUP BY status
         ORDER BY total_amount DESC
-      `, [startDate, endDate]).catch(() => ({ rows: [] })),
+      `, [startDate, endDate]),
 
       db.query(`
         SELECT
@@ -292,16 +316,19 @@ Return comprehensive practice insights as JSON:
   "scheduling_efficiency": "analysis of schedule utilization and no-shows",
   "growth_opportunities": ["3-5 specific actionable recommendations"],
   "alerts": ["any concerning trends that need attention"]
-}`;
+}
+
+Review focus: ${reviewFocus || "Review the documented source evidence, unknown facts and human verification requirements."}`;
 
     const aiResult = await queryOpenRouter(
       prompt,
-      'You are a dental practice management consultant. Provide actionable, data-driven insights to help the practice improve efficiency and revenue.'
+      'You are a dental practice management consultant. Provide actionable, data-driven insights to help the practice improve efficiency and revenue.',
+      { signal: req.aiSignal }
     );
 
     const parsed = parseAIJson(aiResult.content);
 
-    persistAIResult({
+    await persistAIResult({
       endpoint: 'practice-insights',
       resource_type: 'practice',
       input_summary: `Practice insights ${startDate} → ${endDate}`,
@@ -309,7 +336,8 @@ Return comprehensive practice insights as JSON:
       model: aiResult.model,
       tokens_used: aiResult.usage?.total_tokens,
       user_id: req.user?.id,
-    });
+    }, { signal: req.aiSignal });
+    throwIfCancelled(req.aiSignal);
 
     res.json({
       date_range: { start: startDate, end: endDate },
@@ -323,14 +351,16 @@ Return comprehensive practice insights as JSON:
       usage: aiResult.usage
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (req.aiSignal?.aborted || res.destroyed || res.writableEnded) return;
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
 // POST /api/ai/predict-no-show
 // Audit recommendation: stateless no-show prediction.
-router.post('/predict-no-show', authenticateToken, aiRateLimiter, async (req, res) => {
+router.post('/predict-no-show', authenticateToken, aiRateLimiter, nativeAIRequestLifecycle, async (req, res) => {
   try {
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
     const { patient_profile, appointment_details } = req.body;
     if (!patient_profile || !appointment_details) {
       return res.status(400).json({ error: 'patient_profile and appointment_details are required' });
@@ -348,12 +378,13 @@ Return JSON: { probability (0-1), confidence ("low"|"medium"|"high"), top_factor
 
     const aiResult = await queryOpenRouter(
       prompt,
-      'You are a dental practice scheduling analyst. Estimate appointment no-show probability based on patient and appointment data. Be conservative when data is sparse.'
+      'You are a dental practice scheduling analyst. Estimate appointment no-show probability based on patient and appointment data. Be conservative when data is sparse.',
+      { signal: req.aiSignal }
     );
 
     const parsed = parseAIJson(aiResult.content);
 
-    persistAIResult({
+    await persistAIResult({
       endpoint: 'predict-no-show',
       resource_type: 'appointment',
       input_summary: 'predict-no-show stateless',
@@ -361,7 +392,8 @@ Return JSON: { probability (0-1), confidence ("low"|"medium"|"high"), top_factor
       model: aiResult.model,
       tokens_used: aiResult.usage?.total_tokens,
       user_id: req.user?.id,
-    });
+    }, { signal: req.aiSignal });
+    throwIfCancelled(req.aiSignal);
 
     res.json({
       prediction: parsed || { raw: aiResult.content },
@@ -369,14 +401,16 @@ Return JSON: { probability (0-1), confidence ("low"|"medium"|"high"), top_factor
       usage: aiResult.usage,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (req.aiSignal?.aborted || res.destroyed || res.writableEnded) return;
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
 // POST /api/ai/identify-recall-candidates
 // Audit recommendation: stateless recall-candidate identification.
-router.post('/identify-recall-candidates', authenticateToken, aiRateLimiter, async (req, res) => {
+router.post('/identify-recall-candidates', authenticateToken, aiRateLimiter, nativeAIRequestLifecycle, async (req, res) => {
   try {
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
     const { patient_list, recall_criteria } = req.body;
     if (!patient_list || !Array.isArray(patient_list) || patient_list.length === 0) {
       return res.status(400).json({ error: 'patient_list (non-empty array) is required' });
@@ -391,12 +425,13 @@ Return JSON: { candidates: [{ patient_id, name, score (0-100), reasons: [] }], e
 
     const aiResult = await queryOpenRouter(
       prompt,
-      'You are a dental recall campaign analyst. Identify recall candidates using last-visit recency, treatment history, and risk factors.'
+      'You are a dental recall campaign analyst. Identify recall candidates using last-visit recency, treatment history, and risk factors.',
+      { signal: req.aiSignal }
     );
 
     const parsed = parseAIJson(aiResult.content);
 
-    persistAIResult({
+    await persistAIResult({
       endpoint: 'identify-recall-candidates',
       resource_type: 'recall',
       input_summary: `recall candidates from ${patient_list.length} patients`,
@@ -404,7 +439,8 @@ Return JSON: { candidates: [{ patient_id, name, score (0-100), reasons: [] }], e
       model: aiResult.model,
       tokens_used: aiResult.usage?.total_tokens,
       user_id: req.user?.id,
-    });
+    }, { signal: req.aiSignal });
+    throwIfCancelled(req.aiSignal);
 
     res.json({
       recall_candidates: parsed || { raw: aiResult.content },
@@ -412,14 +448,16 @@ Return JSON: { candidates: [{ patient_id, name, score (0-100), reasons: [] }], e
       usage: aiResult.usage,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (req.aiSignal?.aborted || res.destroyed || res.writableEnded) return;
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
 // POST /api/ai/predict-treatment-outcome
 // Audit recommendation: stateless treatment outcome prediction.
-router.post('/predict-treatment-outcome', authenticateToken, aiRateLimiter, async (req, res) => {
+router.post('/predict-treatment-outcome', authenticateToken, aiRateLimiter, nativeAIRequestLifecycle, async (req, res) => {
   try {
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
     if (!process.env.OPENROUTER_API_KEY) return res.status(503).json({ error: 'AI provider not configured' });
     const { patient_profile, treatment_plan } = req.body;
     if (!patient_profile || !treatment_plan) {
@@ -438,12 +476,13 @@ Return JSON: { success_probability (0-1), expected_recovery_weeks, risk_factors:
 
     const aiResult = await queryOpenRouter(
       prompt,
-      'You are a dental clinical analyst. Predict treatment outcomes conservatively from patient and plan data.'
+      'You are a dental clinical analyst. Predict treatment outcomes conservatively from patient and plan data.',
+      { signal: req.aiSignal }
     );
 
     const parsed = parseAIJson(aiResult.content);
 
-    persistAIResult({
+    await persistAIResult({
       endpoint: 'predict-treatment-outcome',
       resource_type: 'treatment_plan',
       input_summary: 'predict-treatment-outcome stateless',
@@ -451,7 +490,8 @@ Return JSON: { success_probability (0-1), expected_recovery_weeks, risk_factors:
       model: aiResult.model,
       tokens_used: aiResult.usage?.total_tokens,
       user_id: req.user?.id,
-    });
+    }, { signal: req.aiSignal });
+    throwIfCancelled(req.aiSignal);
 
     res.json({
       prediction: parsed || { raw: aiResult.content },
@@ -459,14 +499,16 @@ Return JSON: { success_probability (0-1), expected_recovery_weeks, risk_factors:
       usage: aiResult.usage,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (req.aiSignal?.aborted || res.destroyed || res.writableEnded) return;
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
 // POST /api/ai/patient-risk-scoring
 // Audit recommendation: stateless patient risk scoring.
-router.post('/patient-risk-scoring', authenticateToken, aiRateLimiter, async (req, res) => {
+router.post('/patient-risk-scoring', authenticateToken, aiRateLimiter, nativeAIRequestLifecycle, async (req, res) => {
   try {
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
     if (!process.env.OPENROUTER_API_KEY) return res.status(503).json({ error: 'AI provider not configured' });
     const { patient_profile, history } = req.body;
     if (!patient_profile) {
@@ -485,12 +527,13 @@ Return JSON: { risk_score (0-100), risk_tier ("low"|"moderate"|"high"|"very_high
 
     const aiResult = await queryOpenRouter(
       prompt,
-      'You are a dental risk-stratification analyst. Score caries, periodontal, oral cancer, and adherence risks together.'
+      'You are a dental risk-stratification analyst. Score caries, periodontal, oral cancer, and adherence risks together.',
+      { signal: req.aiSignal }
     );
 
     const parsed = parseAIJson(aiResult.content);
 
-    persistAIResult({
+    await persistAIResult({
       endpoint: 'patient-risk-scoring',
       resource_type: 'patient',
       input_summary: 'patient-risk-scoring stateless',
@@ -498,7 +541,8 @@ Return JSON: { risk_score (0-100), risk_tier ("low"|"moderate"|"high"|"very_high
       model: aiResult.model,
       tokens_used: aiResult.usage?.total_tokens,
       user_id: req.user?.id,
-    });
+    }, { signal: req.aiSignal });
+    throwIfCancelled(req.aiSignal);
 
     res.json({
       risk_assessment: parsed || { raw: aiResult.content },
@@ -506,14 +550,16 @@ Return JSON: { risk_score (0-100), risk_tier ("low"|"moderate"|"high"|"very_high
       usage: aiResult.usage,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (req.aiSignal?.aborted || res.destroyed || res.writableEnded) return;
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
 // POST /api/ai/optimize-scheduling
 // Audit recommendation: stateless schedule optimization helper.
-router.post('/optimize-scheduling', authenticateToken, aiRateLimiter, async (req, res) => {
+router.post('/optimize-scheduling', authenticateToken, aiRateLimiter, nativeAIRequestLifecycle, async (req, res) => {
   try {
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
     if (!process.env.OPENROUTER_API_KEY) return res.status(503).json({ error: 'AI provider not configured' });
     const { current_schedule, constraints } = req.body;
     if (!current_schedule) {
@@ -532,12 +578,13 @@ Return JSON: { optimized_changes: [{ from, to, reason }], utilization_estimate_p
 
     const aiResult = await queryOpenRouter(
       prompt,
-      'You are a dental scheduling optimizer. Reduce idle gaps, balance provider load, and respect appointment durations.'
+      'You are a dental scheduling optimizer. Reduce idle gaps, balance provider load, and respect appointment durations.',
+      { signal: req.aiSignal }
     );
 
     const parsed = parseAIJson(aiResult.content);
 
-    persistAIResult({
+    await persistAIResult({
       endpoint: 'optimize-scheduling',
       resource_type: 'schedule',
       input_summary: 'optimize-scheduling stateless',
@@ -545,7 +592,8 @@ Return JSON: { optimized_changes: [{ from, to, reason }], utilization_estimate_p
       model: aiResult.model,
       tokens_used: aiResult.usage?.total_tokens,
       user_id: req.user?.id,
-    });
+    }, { signal: req.aiSignal });
+    throwIfCancelled(req.aiSignal);
 
     res.json({
       optimization: parsed || { raw: aiResult.content },
@@ -553,14 +601,16 @@ Return JSON: { optimized_changes: [{ from, to, reason }], utilization_estimate_p
       usage: aiResult.usage,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (req.aiSignal?.aborted || res.destroyed || res.writableEnded) return;
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
 // POST /api/ai/insurance-claim-optimization
 // Audit recommendation: stateless claim-optimization helper.
-router.post('/insurance-claim-optimization', authenticateToken, aiRateLimiter, async (req, res) => {
+router.post('/insurance-claim-optimization', authenticateToken, aiRateLimiter, nativeAIRequestLifecycle, async (req, res) => {
   try {
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
     if (!process.env.OPENROUTER_API_KEY) return res.status(503).json({ error: 'AI provider not configured' });
     const { claim, patient_context } = req.body;
     if (!claim) {
@@ -579,12 +629,13 @@ Return JSON: { issues: [], recommended_codes: [], narrative_suggestions: [], att
 
     const aiResult = await queryOpenRouter(
       prompt,
-      'You are a dental insurance claim optimization specialist. Use standard CDT coding and improve narratives.'
+      'You are a dental insurance claim optimization specialist. Use standard CDT coding and improve narratives.',
+      { signal: req.aiSignal }
     );
 
     const parsed = parseAIJson(aiResult.content);
 
-    persistAIResult({
+    await persistAIResult({
       endpoint: 'insurance-claim-optimization',
       resource_type: 'claim',
       input_summary: 'insurance-claim-optimization stateless',
@@ -592,7 +643,8 @@ Return JSON: { issues: [], recommended_codes: [], narrative_suggestions: [], att
       model: aiResult.model,
       tokens_used: aiResult.usage?.total_tokens,
       user_id: req.user?.id,
-    });
+    }, { signal: req.aiSignal });
+    throwIfCancelled(req.aiSignal);
 
     res.json({
       optimization: parsed || { raw: aiResult.content },
@@ -600,20 +652,22 @@ Return JSON: { issues: [], recommended_codes: [], narrative_suggestions: [], att
       usage: aiResult.usage,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (req.aiSignal?.aborted || res.destroyed || res.writableEnded) return;
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
 // GET /api/ai/history — paginated list of AI results (optional filters: endpoint, resource_type, resource_id)
 router.get('/history', authenticateToken, async (req, res) => {
   try {
+    await requireCurrentAIActor(db, req.user?.id);
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     const offset = (page - 1) * limit;
 
     const { endpoint, resource_type, resource_id } = req.query;
-    const conditions = [];
-    const params = [];
+    const conditions = ['user_id = $1'];
+    const params = [req.user.id];
     if (endpoint) { params.push(endpoint); conditions.push(`endpoint = $${params.length}`); }
     if (resource_type) { params.push(resource_type); conditions.push(`resource_type = $${params.length}`); }
     if (resource_id) { params.push(resource_id); conditions.push(`resource_id = $${params.length}`); }
@@ -632,7 +686,7 @@ router.get('/history', authenticateToken, async (req, res) => {
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 

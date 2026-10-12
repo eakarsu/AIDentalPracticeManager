@@ -3,6 +3,7 @@ const db = require('../db');
 const { authenticateToken } = require('../middleware/auth');
 const { queryOpenRouter } = require('../services/openrouter');
 const { aiRateLimiter } = require('../middleware/rateLimiter');
+const { nativeAIRequestLifecycle, requireCurrentAIActor, throwIfCancelled, readNativeReviewFocus } = require('../services/nativeAIRequest');
 const router = express.Router();
 
 // Get all recall campaigns — supports ?page=N&limit=N for pagination
@@ -147,10 +148,12 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 });
 
 // POST /api/recalls/ai-message — generate personalized recall reminder message
-router.post('/ai-message', authenticateToken, aiRateLimiter, async (req, res) => {
+router.post('/ai-message', authenticateToken, aiRateLimiter, nativeAIRequestLifecycle, async (req, res) => {
   try {
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
+    const reviewFocus = readNativeReviewFocus(req.body);
     const { recall_id } = req.body;
-    if (!recall_id) return res.status(400).json({ error: 'Missing required field: recall_id' });
+    if (!Number.isSafeInteger(Number(recall_id)) || Number(recall_id) < 1) return res.status(400).json({ error: 'Choose an actual saved recall_id.' });
 
     const recallResult = await db.query(`
       SELECT r.*, p.first_name, p.last_name, p.date_of_birth, p.medical_history,
@@ -175,7 +178,7 @@ router.post('/ai-message', authenticateToken, aiRateLimiter, async (req, res) =>
     const dentistName = lastAppt.rows[0]?.provider || 'your dentist';
     const lastVisitDate = lastAppt.rows[0]?.appointment_date
       ? new Date(lastAppt.rows[0].appointment_date).toLocaleDateString()
-      : 'a while ago';
+      : 'Not documented';
 
     const age = recall.date_of_birth
       ? Math.floor((Date.now() - new Date(recall.date_of_birth)) / 31557600000)
@@ -186,12 +189,12 @@ router.post('/ai-message', authenticateToken, aiRateLimiter, async (req, res) =>
 Patient: ${recall.first_name} ${recall.last_name}${age ? `, Age ${age}` : ''}
 Last Visit: ${lastVisitDate} (with ${dentistName})
 Last Appointment Type: ${lastAppt.rows[0]?.appointment_type || 'dental visit'}
-Medical History: ${recall.medical_history || 'None reported'}
+Medical History: ${recall.medical_history || 'Not documented'}
 
 Recall Details:
 - Type: ${recall.campaign_type}
 - Reason: ${recall.recall_reason}
-- Due Date: ${recall.due_date ? new Date(recall.due_date).toLocaleDateString() : 'overdue'}
+- Due Date: ${recall.due_date ? new Date(recall.due_date).toLocaleDateString() : 'Not documented'}
 - Contact Method: ${recall.contact_method}
 
 Generate a warm, professional, personalized recall message appropriate for ${recall.contact_method} (SMS or email).
@@ -201,8 +204,9 @@ Keep SMS messages under 160 characters. For email, include a subject line.
 Return JSON: { "message": "...", "subject": "..." (for email only), "channel": "${recall.contact_method}" }`;
 
     const aiResult = await queryOpenRouter(
-      prompt,
-      'You are an expert dental patient communication specialist. Generate personalized, warm recall messages that encourage appointment booking.'
+      prompt + '\n\nReview focus: ' + (reviewFocus || 'Prepare a reviewable draft from documented source records.'),
+      'You are a dental patient communication assistant. Prepare a reviewable message draft using actual saved recall and patient context. Missing visits, diagnosis, contact consent and approval are not documented. Do not assert unknown clinical facts or authorization. This request sends no message and approves no outreach.',
+      { signal: req.aiSignal }
     );
 
     const { parseAIJson } = require('../services/parseAIJson');
@@ -212,6 +216,8 @@ Return JSON: { "message": "...", "subject": "..." (for email only), "channel": "
       parsed = { message: parsed.raw_response, channel: recall.contact_method };
     }
 
+    throwIfCancelled(req.aiSignal);
+    await requireCurrentAIActor(db, req.user?.id, req.aiSignal);
     res.json({
       recall_id,
       patient: { id: recall.patient_id, name: `${recall.first_name} ${recall.last_name}` },
@@ -221,7 +227,8 @@ Return JSON: { "message": "...", "subject": "..." (for email only), "channel": "
       usage: aiResult.usage
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    if (req.aiSignal?.aborted || res.destroyed || res.writableEnded) return;
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
