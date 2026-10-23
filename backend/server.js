@@ -64,6 +64,7 @@ app.use('/api/portal', require('./routes/portal'));
 app.use('/api/xray-cv', require('./routes/xrayCv'));
 app.use('/api/perio-recall-readiness', require('./routes/perioRecallReadiness'));
 app.use('/api/care-coordination', require('./routes/careCoordination'));
+app.use('/api/feature-pack', require('./routes/featurePack').createFeaturePackRouter({ queryFn:(t,p)=>require('./db').query(t,p), authenticate:require('./middleware/auth').authenticateToken, table:'patients' }));
 
 // Health check
 app.get('/api/health', (req, res) => {
